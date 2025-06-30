@@ -13,22 +13,24 @@ void setup() {
   kalm.errMeas = data.fil2;
   motor.setMinDuty(data.mdu);
 
-
   ntp.begin();
   ntp.setGMT(data.gmt);
+
+  // Синхронизация времени NTP
   byte count = 0;
-  while (!ntp.synced()) {
+  while (!ntp.synced() && count++ < 10) {
     ntp.updateNow();
     delay(1000);
-    if (++count > 10) break;
   }
 }
 
 void speedLoop() {
-  static uint32_t tmr;
-  uint32_t dt = millis() - tmr;
+  static uint32_t tmr = millis();
+  uint32_t now = millis();
+  uint32_t dt = now - tmr;
+
   if (dt >= SPEED_LOOP_PRD) {
-    tmr = millis();
+    tmr = now;
     float rawPos = analogRead(0) * 270.0 / 1023;
     float medianPos = mfil.get(rawPos);
     pos += (medianPos - pos) * 0.5;
@@ -72,7 +74,6 @@ void speedLoop() {
       Serial.print(pid.setpoint);
       Serial.print(',');
       Serial.print(target);
-      Serial.print(',');
       Serial.println(pos);
     }
 
@@ -83,14 +84,14 @@ void speedLoop() {
 void move(int tar) {
   tar = constrain(tar, 0, 270);
   target = tar;
-  moveFlag = 1;
-  startPos = pos;             // текущий угол - начальная позиция
-  dir = target > startPos;    // направление движения
-  s2 = (target + pos) / 2;    // середина траектории (как сред. арифм)
-  int err2 = abs(target - pos) / 2;       // длина половины траектории
-  curMaxV = sqrt(2.0 * data.acc * err2);  // макс. скорость при заданном ускорением
-  if (curMaxV > data.vel) curMaxV = data.vel;   // ограничиваем по макс. скорости
-  tgVS = curMaxV / err2;      // tg угла наклона графика для дальнейших расчётов
+  moveFlag = true;
+  startPos = pos;                 // текущая позиция становится начальной позицией
+  dir = target > startPos;        // определяем направление движения
+  s2 = (target + pos) / 2;        // точка середины траектории
+  int err2 = abs(target - pos) / 2; // половина расстояния перемещения
+  curMaxV = sqrt(2.0 * data.acc * err2); // максимальная скорость с учётом ускорения
+  if (curMaxV > data.vel) curMaxV = data.vel; // ограничение максимальной скоростью
+  tgVS = curMaxV / err2;          // тангенс угла наклона графика для расчетов
   pid.init();
 }
 
@@ -101,12 +102,15 @@ void moveToSun() {
 
 void trackerTick() {
   if (!ntp.synced() || !data.track) return;
-  static uint32_t tmr;
+
+  static uint32_t tmr = millis();
   if (millis() - tmr >= 45000) {
     tmr = millis();
     if (ntp.minute()) return;
+    
     SunPosition sun(data.lat, data.lon, ntp.unix() + 30 * 60, data.gmt);
     if (ntp.hour() < sun.sunrise() / 60 || ntp.hour() > sun.sunset() / 60) return;
+
     move(sun.angle90() + data.center);
   }
 }
